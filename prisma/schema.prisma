@@ -1,0 +1,353 @@
+// ParkControl Database Schema
+// Run: npx prisma migrate dev --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// PROPERTIES & ZONES
+// ─────────────────────────────────────────────
+
+model Property {
+  id          String   @id @default(uuid())
+  name        String
+  address     String
+  city        String
+  state       String
+  zip         String
+  type        PropertyType @default(RESIDENTIAL)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  zones       Zone[]
+  units       Unit[]
+  users       UserProperty[]
+  passes      Pass[]
+  auditLogs   AuditLog[]
+  rules       PropertyRules?
+  visitorLinks VisitorLink[]
+}
+
+model Zone {
+  id          String   @id @default(uuid())
+  propertyId  String
+  name        String   // "Lot A", "Garage Level 2", etc.
+  capacity    Int?     // null = unlimited
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  passes      Pass[]
+  vehicles    Vehicle[]
+}
+
+// ─────────────────────────────────────────────
+// PROPERTY RULES (one row per property)
+// ─────────────────────────────────────────────
+
+model PropertyRules {
+  id                      String   @id @default(uuid())
+  propertyId              String   @unique
+  visitorPassDurationHrs  Int      @default(24)    // default visitor pass length
+  allowOvernightPasses    Boolean  @default(true)
+  maxVisitorPassesPerUnit Int      @default(2)     // concurrent active passes per unit
+  gracePeriodMinutes      Int      @default(30)    // time after expiry before violation
+  towEligibleAfterScans   Int      @default(3)     // # of unauth scans before tow flag
+  permitRenewalDays       Int      @default(365)   // resident permit length in days
+  renewalReminderDays     Int      @default(30)    // days before expiry to send reminder
+  blacklistAutoFlag       Boolean  @default(true)  // auto-flag blacklisted plates on scan
+  updatedAt               DateTime @updatedAt
+
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────
+// USERS & ROLES
+// ─────────────────────────────────────────────
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String
+  firstName     String
+  lastName      String
+  phone         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Notification preferences
+  notifyPassExpiry        Boolean @default(true)
+  notifyVisitorRegistered Boolean @default(true)
+  notifySmsExpiry         Boolean @default(false)
+  notifyPermitRenewal     Boolean @default(true)
+
+  properties    UserProperty[]   // which properties this user has access to
+  vehicles      Vehicle[]
+  passesIssued  Pass[]           @relation("PassIssuedBy")
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+  visitorLinks  VisitorLink[]
+}
+
+// Join table: user ↔ property with role
+model UserProperty {
+  id         String   @id @default(uuid())
+  userId     String
+  propertyId String
+  role       UserRole @default(RESIDENT)
+  unitId     String?  // null for managers/admins
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  unit       Unit?    @relation(fields: [unitId], references: [id])
+
+  @@unique([userId, propertyId])
+}
+
+// ─────────────────────────────────────────────
+// UNITS
+// ─────────────────────────────────────────────
+
+model Unit {
+  id         String   @id @default(uuid())
+  propertyId String
+  number     String   // "204", "Unit B", etc.
+  floor      Int?
+  isVacant   Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  property   Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  residents  UserProperty[]
+  vehicles   Vehicle[]
+
+  @@unique([propertyId, number])
+}
+
+// ─────────────────────────────────────────────
+// VEHICLES
+// ─────────────────────────────────────────────
+
+model Vehicle {
+  id           String      @id @default(uuid())
+  plate        String      // normalized: uppercase, trimmed
+  state        String      @default("TX")
+  make         String?
+  model        String?
+  year         Int?
+  color        String?
+  ownerId      String?     // null = unknown (flagged by enforcement)
+  unitId       String?
+  zoneId       String?     // assigned zone (null = any allowed zone)
+  permitType   PermitType  @default(RESIDENT)
+  status       VehicleStatus @default(ACTIVE)
+  isBlacklisted Boolean   @default(false)
+  blacklistNote String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  owner        User?    @relation(fields: [ownerId], references: [id])
+  unit         Unit?    @relation(fields: [unitId], references: [id])
+  zone         Zone?    @relation(fields: [zoneId], references: [id])
+  passes       Pass[]
+  auditLogs    AuditLog[]
+
+  @@index([plate])
+  @@index([plate, state])
+}
+
+// ─────────────────────────────────────────────
+// PASSES
+// ─────────────────────────────────────────────
+
+model Pass {
+  id            String     @id @default(uuid())
+  propertyId    String
+  zoneId        String?
+  vehicleId     String?
+  plate         String     // denormalized for quick lookup even if vehicle not in system
+  issuedById    String?    // user who created it (null = self-registered via link)
+  visitorLinkId String?    // populated if visitor self-registered
+  type          PassType   @default(VISITOR)
+  status        PassStatus @default(ACTIVE)
+
+  // Timing
+  startsAt      DateTime   @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+
+  // QR payload — signed JWT stored for verification
+  qrToken       String     @unique
+  qrPayload     String     // JSON: {passId, plate, propertyId, zoneId, expiresAt, sig}
+
+  // Visitor metadata
+  visitorName   String?
+  vehicleMake   String?
+  vehicleColor  String?
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  property      Property   @relation(fields: [propertyId], references: [id])
+  zone          Zone?      @relation(fields: [zoneId], references: [id])
+  vehicle       Vehicle?   @relation(fields: [vehicleId], references: [id])
+  issuedBy      User?      @relation("PassIssuedBy", fields: [issuedById], references: [id])
+  visitorLink   VisitorLink? @relation(fields: [visitorLinkId], references: [id])
+  scans         PassScan[]
+
+  @@index([plate])
+  @@index([status, expiresAt])
+  @@index([propertyId, status])
+}
+
+// Every time a pass QR is scanned by enforcement
+model PassScan {
+  id          String      @id @default(uuid())
+  passId      String
+  scannedById String?     // officer user ID (null = anonymous/kiosk)
+  result      ScanResult
+  note        String?
+  scannedAt   DateTime    @default(now())
+  deviceInfo  String?     // "iOS 17 / ParkControl Enforcer v1.2"
+
+  pass        Pass        @relation(fields: [passId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// VISITOR SELF-REGISTRATION LINKS
+// ─────────────────────────────────────────────
+
+model VisitorLink {
+  id            String      @id @default(uuid())
+  token         String      @unique // the URL token: parkcontrol.app/v/{token}
+  propertyId    String
+  issuedById    String      // resident who generated the link
+  unitId        String?
+  durationHours Int         @default(24)
+  zoneId        String?
+  isUsed        Boolean     @default(false)
+  usedAt        DateTime?
+  expiresAt     DateTime    // link itself expires (e.g. 48hrs after creation)
+  createdAt     DateTime    @default(now())
+
+  property      Property    @relation(fields: [propertyId], references: [id])
+  issuedBy      User        @relation(fields: [issuedById], references: [id])
+  passes        Pass[]      // passes created via this link
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  propertyId  String?
+  userId      String?     // who performed the action (null = system)
+  vehicleId   String?
+  plate       String?     // denormalized
+  event       AuditEvent
+  outcome     String?     // "valid", "expired", "blacklisted", "no_pass", etc.
+  metadata    Json?       // flexible: zone, passId, officerNote, deviceInfo, etc.
+  createdAt   DateTime    @default(now())
+
+  property    Property?   @relation(fields: [propertyId], references: [id])
+  user        User?       @relation(fields: [userId], references: [id])
+  vehicle     Vehicle?    @relation(fields: [vehicleId], references: [id])
+
+  @@index([propertyId, createdAt])
+  @@index([plate])
+  @@index([event])
+}
+
+// ─────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum PropertyType {
+  RESIDENTIAL
+  COMMERCIAL
+  MIXED
+}
+
+enum UserRole {
+  SUPER_ADMIN    // full system access
+  PROPERTY_MANAGER // manages one or more properties
+  RESIDENT       // unit-level access
+  ENFORCEMENT    // scan-only access
+}
+
+enum PermitType {
+  RESIDENT
+  VISITOR
+  EMPLOYEE
+  RESERVED
+}
+
+enum VehicleStatus {
+  ACTIVE
+  MONITORING    // seen but not registered
+  FLAGGED
+  TOW_ELIGIBLE
+  REMOVED
+}
+
+enum PassType {
+  RESIDENT_PERMIT
+  VISITOR
+  TEMPORARY
+}
+
+enum PassStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum ScanResult {
+  VALID
+  EXPIRED
+  REVOKED
+  NOT_FOUND
+  BLACKLISTED
+  WRONG_ZONE
+  WITHIN_GRACE_PERIOD
+}
+
+enum AuditEvent {
+  PASS_CREATED
+  PASS_SCANNED
+  PASS_EXPIRED
+  PASS_REVOKED
+  VEHICLE_REGISTERED
+  VEHICLE_BLACKLISTED
+  VEHICLE_FLAGGED
+  TOW_ELIGIBLE_SET
+  VISITOR_LINK_CREATED
+  VISITOR_LINK_USED
+  RESIDENT_REGISTERED
+  PERMIT_RENEWED
+  RULE_UPDATED
+}

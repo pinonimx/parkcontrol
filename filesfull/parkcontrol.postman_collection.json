@@ -1,0 +1,424 @@
+{
+  "info": {
+    "name": "ParkControl API",
+    "description": "Full test suite for the ParkControl parking management API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base", "value": "http://localhost:3000/api" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "propertyId", "value": "prop-oakridge-0001" },
+    { "key": "zoneId", "value": "zone-oakridge-lota" },
+    { "key": "passId", "value": "" },
+    { "key": "visitorToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login — Super Admin",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const r = pm.response.json();",
+            "pm.collectionVariables.set('accessToken', r.accessToken);",
+            "pm.collectionVariables.set('refreshToken', r.refreshToken);",
+            "pm.test('Login OK', () => pm.response.to.have.status(200));",
+            "pm.test('Has tokens', () => { pm.expect(r.accessToken).to.be.a('string'); });"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"admin@parkcontrol.app\",\"password\":\"Admin1234!\"}" }
+          }
+        },
+        {
+          "name": "Login — Resident",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const r = pm.response.json();",
+            "pm.collectionVariables.set('accessToken', r.accessToken);",
+            "pm.collectionVariables.set('refreshToken', r.refreshToken);",
+            "pm.test('Login OK', () => pm.response.to.have.status(200));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"m.gonzalez@email.com\",\"password\":\"Resident1234!\"}" }
+          }
+        },
+        {
+          "name": "Login — Enforcement Officer",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"email\":\"k.davis@enforcement.com\",\"password\":\"Officer1234!\"}" }
+          }
+        },
+        {
+          "name": "Get current user (/me)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/auth/me",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/auth/refresh",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"refreshToken\":\"{{refreshToken}}\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Properties",
+      "item": [
+        {
+          "name": "List all properties",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/properties",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Get single property",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/properties/{{propertyId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Create property (admin only)",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/properties",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"Test Complex\",\"address\":\"123 Test St\",\"city\":\"Dallas\",\"state\":\"TX\",\"zip\":\"75201\",\"type\":\"RESIDENTIAL\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "item": [
+        {
+          "name": "List my vehicles",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/vehicles",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Register a vehicle",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/vehicles",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"plate\":\"TEST999\",\"state\":\"TX\",\"make\":\"Tesla\",\"model\":\"Model 3\",\"year\":2023,\"color\":\"White\",\"propertyId\":\"{{propertyId}}\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Passes",
+      "item": [
+        {
+          "name": "Issue a visitor pass",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const r = pm.response.json();",
+            "if (r.pass) pm.collectionVariables.set('passId', r.pass.id);",
+            "pm.test('Pass created', () => pm.response.to.have.status(201));",
+            "pm.test('Has QR', () => pm.expect(r.qrImageBase64).to.include('data:image'));"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/passes",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"propertyId\":\"{{propertyId}}\",\"zoneId\":\"{{zoneId}}\",\"plate\":\"VISITOR1\",\"state\":\"TX\",\"durationHours\":24,\"visitorName\":\"Test Visitor\",\"vehicleMake\":\"Honda\",\"vehicleColor\":\"Blue\"}" }
+          }
+        },
+        {
+          "name": "List my passes",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/passes",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Get pass + QR by ID",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/passes/{{passId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Revoke a pass",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base}}/passes/{{passId}}/revoke",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"reason\":\"Visitor left early\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Visitor Links",
+      "item": [
+        {
+          "name": "Generate a visitor link",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "const r = pm.response.json();",
+            "if (r.token) pm.collectionVariables.set('visitorToken', r.token);",
+            "pm.test('Link created', () => pm.response.to.have.status(201));",
+            "console.log('Visitor URL:', r.url);"
+          ]}}],
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/visitor-links",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"propertyId\":\"{{propertyId}}\",\"durationHours\":24,\"zoneId\":\"{{zoneId}}\"}" }
+          }
+        },
+        {
+          "name": "Visitor fetches link details (public)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/visitor-links/{{visitorToken}}"
+          }
+        },
+        {
+          "name": "Visitor self-registers (public)",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/visitor-links/{{visitorToken}}/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"plate\":\"SELFR123\",\"state\":\"TX\",\"make\":\"Ford\",\"color\":\"Red\",\"visitorName\":\"Jane Doe\"}" }
+          }
+        },
+        {
+          "name": "List my visitor links",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/visitor-links",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enforcement",
+      "item": [
+        {
+          "name": "Plate lookup — valid resident",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/enforcement/lookup-plate",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"plate\":\"7XGH142\",\"propertyId\":\"{{propertyId}}\",\"zoneId\":\"{{zoneId}}\"}" }
+          }
+        },
+        {
+          "name": "Plate lookup — blacklisted",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/enforcement/lookup-plate",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"plate\":\"PZK9901\",\"propertyId\":\"{{propertyId}}\"}" }
+          }
+        },
+        {
+          "name": "Plate lookup — unknown plate",
+          "request": {
+            "method": "POST",
+            "url": "{{base}}/enforcement/lookup-plate",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"plate\":\"ZZZ9999\",\"propertyId\":\"{{propertyId}}\"}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rules",
+      "item": [
+        {
+          "name": "Get property rules",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/rules/{{propertyId}}",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Update rules (manager/admin)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{base}}/rules/{{propertyId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"visitorPassDurationHrs\":48,\"maxVisitorPassesPerUnit\":3,\"gracePeriodMinutes\":15}" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {
+          "name": "Report index",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/reports",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Property summary (admin)",
+          "request": {
+            "method": "GET",
+            "url": "{{base}}/reports/summary",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Occupancy report",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/occupancy?propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","occupancy"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Pass activity report (last 30 days)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/passes?propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","passes"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Violations report",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/violations?propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","violations"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Compliance report",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/compliance?propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","compliance"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Enforcement activity report",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/enforcement?propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","enforcement"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Audit trail — by plate",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/audit-trail?plate=7XGH142", "host": ["{{base}}"], "path": ["reports","audit-trail"], "query": [{ "key": "plate", "value": "7XGH142" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Download violations CSV",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/reports/violations?format=csv&propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["reports","violations"], "query": [{ "key": "format", "value": "csv" }, { "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Audit Log",
+      "item": [
+        {
+          "name": "Recent events",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/audit?propertyId={{propertyId}}&limit=20", "host": ["{{base}}"], "path": ["audit"], "query": [{ "key": "propertyId", "value": "{{propertyId}}" }, { "key": "limit", "value": "20" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Filter by event type",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/audit?event=PASS_CREATED&propertyId={{propertyId}}", "host": ["{{base}}"], "path": ["audit"], "query": [{ "key": "event", "value": "PASS_CREATED" }, { "key": "propertyId", "value": "{{propertyId}}" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        },
+        {
+          "name": "Filter by plate",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base}}/audit?plate=PZK9901", "host": ["{{base}}"], "path": ["audit"], "query": [{ "key": "plate", "value": "PZK9901" }] },
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('API is up', () => pm.response.to.have.status(200));",
+            "pm.test('Status ok', () => pm.expect(pm.response.json().status).to.equal('ok'));"
+          ]}}],
+          "request": {
+            "method": "GET",
+            "url": "http://localhost:3000/health"
+          }
+        }
+      ]
+    }
+  ]
+}
